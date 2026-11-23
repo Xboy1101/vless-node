@@ -1,5 +1,5 @@
 #!/bin/sh
-# PaaS VLESS+WS node.
+# PaaS VLESS+WS node (runs as non-root; all nginx paths under /tmp).
 # The platform terminates TLS at its ingress and forwards plain HTTP to this
 # container. nginx answers the platform health probe on / with 200 and
 # proxies the VLESS WebSocket path to xray. xray itself listens on
@@ -10,8 +10,9 @@ PORT="${PORT:-8080}"
 UUID="${UUID:?UUID env var is required}"
 WS_PATH="${WS_PATH:-/vless}"
 XRAY_PORT=10000
+NGX_TMP=/tmp/nginx
 
-mkdir -p /etc/xray /run/nginx
+mkdir -p /etc/xray "$NGX_TMP/client_body" "$NGX_TMP/proxy" "$NGX_TMP/fastcgi" "$NGX_TMP/uwsgi" "$NGX_TMP/scgi"
 
 cat > /etc/xray/config.json <<EOF
 {
@@ -36,13 +37,17 @@ cat > /etc/xray/config.json <<EOF
 EOF
 
 cat > /etc/nginx/nginx.conf <<EOF
-user nginx;
 worker_processes 1;
 error_log /dev/stderr warn;
-pid /run/nginx/nginx.pid;
+pid /tmp/nginx.pid;
 events { worker_connections 256; }
 http {
     access_log off;
+    client_body_temp_path $NGX_TMP/client_body;
+    proxy_temp_path $NGX_TMP/proxy;
+    fastcgi_temp_path $NGX_TMP/fastcgi;
+    uwsgi_temp_path $NGX_TMP/uwsgi;
+    scgi_temp_path $NGX_TMP/scgi;
     server {
         listen ${PORT};
         location = / {
@@ -61,4 +66,4 @@ http {
 EOF
 
 /usr/local/bin/xray run -c /etc/xray/config.json &
-exec nginx -c /etc/nginx/nginx.conf -g 'daemon off;'
+exec nginx -e /dev/stderr -c /etc/nginx/nginx.conf -g 'daemon off;'
